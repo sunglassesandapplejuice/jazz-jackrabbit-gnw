@@ -28,9 +28,9 @@ Requires Retro-Go SD **v2.0.0-rc1 or later** (firmware ABI v2).
 
 1. Build the game data pack (Python 3 only, nothing else to install):
    ```
-   python3 jj_pack.py Jazz.jj /path/to/JAZZ
+   python3 tools/jj_pack.py Jazz.jj /path/to/JAZZ
    ```
-   On Windows: `py jj_pack.py Jazz.jj C:\Games\Jazz`
+   On Windows: `py tools/jj_pack.py Jazz.jj C:\Games\Jazz`
 2. Copy both files to the SD card, side by side, with the same name:
    ```
    /homebrews/Jazz.bin
