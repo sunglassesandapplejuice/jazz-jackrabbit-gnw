@@ -1,8 +1,10 @@
 **/build/
 **/build_*/
+.idea/
 *.bin
 *.elf
 *.map
+frame_end.ppm
 *.o
 *.d
 *.su
@@ -17,3 +19,4 @@ __pycache__/
 tools/bin/
 release/
 listen*/
+.idea/
