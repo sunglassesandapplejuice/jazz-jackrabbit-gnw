@@ -3,6 +3,7 @@
 *.bin
 *.elf
 *.map
+frame_end.ppm
 *.o
 *.d
 *.su
@@ -16,3 +17,4 @@ __pycache__/
 *.fb
 tools/bin/
 release/
+.idea/
