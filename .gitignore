@@ -1,5 +1,6 @@
 **/build/
 **/build_*/
+.idea/
 *.bin
 *.elf
 *.map
@@ -17,4 +18,4 @@ __pycache__/
 *.fb
 tools/bin/
 release/
-.idea/
+listen*/
