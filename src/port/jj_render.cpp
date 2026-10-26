@@ -96,7 +96,7 @@ static bool render_one(const char *name, const uint8_t *data, uint32_t size, con
 		xmp_free_context(ctx);
 		return false;
 	}
-	xmp_start_player(ctx, rate, 0);
+	xmp_start_player(ctx, rate, XMP_FORMAT_MONO);
 	// offline: the best interpolation (the game used "nearest" on handhelds)
 	xmp_set_player(ctx, XMP_PLAYER_INTERP, XMP_INTERP_SPLINE);
 	xmp_set_player(ctx, XMP_PLAYER_AMP, 2); // like sound.cpp
@@ -121,9 +121,9 @@ static bool render_one(const char *name, const uint8_t *data, uint32_t size, con
 		if (pass3 > 0 && (long)out.size() >= pass3 + (long)rate * (TAIL_SECONDS + 1))
 			break;
 		const int16_t *b = (const int16_t *)fi.buffer;
-		int n = fi.buffer_size / 4;
+		int n = fi.buffer_size / 2;
 		for (int i = 0; i < n; i++)
-			out.push_back((int16_t)((b[2 * i] + b[2 * i + 1]) >> 1));
+			out.push_back(b[i]);
 		if (pass1 < 0 && out.size() >= max_samples)
 			break;
 	}
@@ -156,7 +156,7 @@ static bool render_one(const char *name, const uint8_t *data, uint32_t size, con
 		loop_start = restart + tail;
 		err = diff(total, loop_start);
 		how = "pass 1";
-		if (err > 32 && pass3 > pass2) {
+		if (err > 100 && pass3 > pass2) {
 			// the song changes on the way (tempo, volume...): loop on the
 			// third pass, which is like the second one
 			long body3 = pass3 - pass2;
