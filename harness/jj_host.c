@@ -10,12 +10,15 @@
  *     -t <ms>          stop after <ms> of game time (default 30000)
  *     -s <script>      button script: "ms:BTN:1,ms:BTN:0,..." (BTN = LEFT,
  *                      RIGHT, UP, DOWN, A, B, GAME, TIME)
+ *     -T <timeline>    replay a gwemu timeline/recording (down/release lines,
+ *                      guest seconds); see tools/timeline_trim.py
+ *     -O <seconds>     with -T: subtract this guest time base (default 0)
  *     -S <ms,ms,...>   write frame_<ms>.ppm at these times
  *     -e <ms>          also write a frame every <ms>
  *     -w <file.wav>    write the audio output
  *     -o <dir>         output directory (default .)
  *     -H <kb>          heap size in KB (default 600)
- *     -l <world:level> start at this level, no intro / menu
+ *     -l <world:level> start at this level (difficulty screen + intro remain)
  *     -m               no music, -n: no sound effects
  *     -F <ms>          slow device: every presented frame costs <ms> more
  *     -R <dir>         render the music modules to <dir>/<NAME>.MUS (for
@@ -33,6 +36,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <ctype.h>
+#include <errno.h>
 #ifndef _WIN32
 #include <sys/mman.h>
 #else
@@ -56,9 +61,10 @@ static bool have_frame;
 static uint64_t frames_presented;
 static uint64_t frame_cost_us;
 
-typedef struct { uint64_t t; uint32_t mask; int down; } btn_ev_t;
-static btn_ev_t evs[1024];
-static int n_evs, next_ev;
+typedef struct { uint64_t t; uint32_t mask; int down; int seq; } btn_ev_t;
+static btn_ev_t *evs;
+static int n_evs, next_ev, cap_evs, ev_seq;
+static uint64_t last_ev_us;
 static uint32_t buttons;
 
 static uint64_t shots[256];
@@ -269,7 +275,157 @@ static int cmp_u64(const void *a, const void *b)
 static int cmp_ev(const void *a, const void *b)
 {
     const btn_ev_t *x = a, *y = b;
-    return x->t < y->t ? -1 : x->t > y->t;
+    if (x->t != y->t)
+        return x->t < y->t ? -1 : 1;
+    return x->seq < y->seq ? -1 : x->seq > y->seq;
+}
+
+static int eq_ci(const char *a, const char *b)
+{
+    while (*a && *b) {
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
+            return 0;
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+/* gwemu logical button names (hw/misc/gnw_h7b0_gpio.c), case-insensitive.
+ * start/select are what the firmware maps to GAME/TIME on the device;
+ * pause/pwr are emulator-side and do not reach the game. */
+static uint32_t parse_btn_timeline(const char *s)
+{
+    if (eq_ci(s, "left")) return JJ_BTN_LEFT;
+    if (eq_ci(s, "right")) return JJ_BTN_RIGHT;
+    if (eq_ci(s, "up")) return JJ_BTN_UP;
+    if (eq_ci(s, "down")) return JJ_BTN_DOWN;
+    if (eq_ci(s, "a")) return JJ_BTN_A;
+    if (eq_ci(s, "b")) return JJ_BTN_B;
+    if (eq_ci(s, "game") || eq_ci(s, "start")) return JJ_BTN_GAME;
+    if (eq_ci(s, "time") || eq_ci(s, "select")) return JJ_BTN_TIME;
+    if (eq_ci(s, "pause") || eq_ci(s, "pwr")) return 0;
+    fprintf(stderr, "jj_host: timeline: unknown button %s\n", s);
+    return 0;
+}
+
+static void add_ev(uint64_t t_us, uint32_t mask, int down)
+{
+    if (n_evs == cap_evs) {
+        cap_evs = cap_evs ? cap_evs * 2 : 256;
+        evs = realloc(evs, (size_t)cap_evs * sizeof(*evs));
+        if (!evs) {
+            perror("realloc");
+            exit(1);
+        }
+    }
+    evs[n_evs++] = (btn_ev_t){ t_us, mask, down, ev_seq++ };
+    if (t_us > last_ev_us)
+        last_ev_us = t_us;
+}
+
+static void add_btn_list(const char *list, uint64_t t_us, int down)
+{
+    char *s = strdup(list);
+    if (!s) {
+        perror("strdup");
+        exit(1);
+    }
+    for (char *tok = strtok(s, "+"); tok; tok = strtok(NULL, "+")) {
+        uint32_t mask = parse_btn_timeline(tok);
+        if (mask)
+            add_ev(t_us, mask, down);
+    }
+    free(s);
+}
+
+/* "[MM:]SS[.fff]" */
+static int parse_time(const char *s, double *out)
+{
+    char *end;
+    double v = strtod(s, &end);
+    if (end == s)
+        return 0;
+    if (*end == ':') {
+        char *end2;
+        double sec = strtod(end + 1, &end2);
+        if (end2 == end + 1 || *end2)
+            return 0;
+        v = v * 60.0 + sec;
+    } else if (*end) {
+        return 0;
+    }
+    *out = v;
+    return 1;
+}
+
+static void load_timeline(const char *path, double base)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        fprintf(stderr, "jj_host: cannot open timeline %s: %s\n",
+                path, strerror(errno));
+        exit(1);
+    }
+    char line[512];
+    int lineno = 0;
+    while (fgets(line, sizeof(line), f)) {
+        lineno++;
+        char *hash = strchr(line, '#');
+        if (hash)
+            *hash = '\0';
+        char *ts = strtok(line, " \t\r\n");
+        if (!ts)
+            continue;
+        char *act = strtok(NULL, " \t\r\n");
+        if (!act)
+            continue;
+        char *arg = strtok(NULL, " \t\r\n");
+        double t;
+        if (!parse_time(ts, &t)) {
+            fprintf(stderr, "jj_host: %s:%d: bad time %s\n", path, lineno, ts);
+            exit(2);
+        }
+        if (!strcmp(act, "quit"))
+            break;
+        if (!strcmp(act, "screenshot") || !strcmp(act, "checkpoint"))
+            continue;
+        if (!arg) {
+            fprintf(stderr, "jj_host: %s:%d: %s needs a button\n",
+                    path, lineno, act);
+            continue;
+        }
+        int down;
+        double dur = 0.0;
+        if (!strcmp(act, "down")) {
+            down = 1;
+        } else if (!strcmp(act, "release")) {
+            down = 0;
+        } else if (!strcmp(act, "press")) {
+            down = 1;
+            dur = 0.1;
+        } else if (!strcmp(act, "hold")) {
+            down = 1;
+            char *d = strtok(NULL, " \t\r\n");
+            if (!d || (dur = strtod(d, NULL)) <= 0) {
+                fprintf(stderr, "jj_host: %s:%d: hold needs a duration\n",
+                        path, lineno);
+                continue;
+            }
+        } else {
+            fprintf(stderr, "jj_host: %s:%d: ignoring action %s\n",
+                    path, lineno, act);
+            continue;
+        }
+        double rel = t - base;
+        if (rel < 0.0)
+            continue; /* before the cut */
+        uint64_t us = (uint64_t)(rel * 1000000.0 + 0.5);
+        add_btn_list(arg, us, down);
+        if (down && dur > 0.0)
+            add_btn_list(arg, us + (uint64_t)(dur * 1000000.0 + 0.5), 0);
+    }
+    fclose(f);
 }
 
 int main(int argc, char **argv)
@@ -279,6 +435,9 @@ int main(int argc, char **argv)
     bool music = true, sound = true;
     const char *bake_out = NULL;
     const char *render_dir = NULL;
+    const char *timeline_path = NULL;
+    double timeline_base = 0.0;
+    bool end_set = false;
     int render_rate = RATE;
     bool render_adpcm = false;
     if (argc < 2) {
@@ -289,7 +448,7 @@ int main(int argc, char **argv)
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const char *v = (i + 1 < argc) ? argv[i + 1] : NULL;
-        if (!strcmp(a, "-t") && v) { end_us = strtoull(v, NULL, 10) * 1000; i++; }
+        if (!strcmp(a, "-t") && v) { end_us = strtoull(v, NULL, 10) * 1000; end_set = true; i++; }
         else if (!strcmp(a, "-o") && v) { snprintf(out_dir, sizeof(out_dir), "%s", v); i++; }
         else if (!strcmp(a, "-H") && v) { heap_kb = strtoul(v, NULL, 10); i++; }
         else if (!strcmp(a, "-l") && v) { if (sscanf(v, "%d:%d", &start_world, &start_level) != 2) return 2; i++; }
@@ -313,9 +472,15 @@ int main(int argc, char **argv)
                 shots[n_shots++] = strtoull(tok, NULL, 10) * 1000;
             qsort(shots, n_shots, sizeof(shots[0]), cmp_u64);
             i++;
+        } else if (!strcmp(a, "-T") && v) {
+            timeline_path = v;
+            i++;
+        } else if (!strcmp(a, "-O") && v) {
+            timeline_base = strtod(v, NULL);
+            i++;
         } else if (!strcmp(a, "-s") && v) {
             char *s = strdup(v);
-            for (char *tok = strtok(s, ","); tok && n_evs < 1024; tok = strtok(NULL, ",")) {
+            for (char *tok = strtok(s, ","); tok; tok = strtok(NULL, ",")) {
                 char key[32];
                 unsigned long long t;
                 int down;
@@ -323,18 +488,26 @@ int main(int argc, char **argv)
                     fprintf(stderr, "bad script item %s\n", tok);
                     return 2;
                 }
-                evs[n_evs].t = t * 1000;
-                evs[n_evs].mask = parse_btn(key);
-                evs[n_evs].down = down;
-                n_evs++;
+                add_ev(t * 1000, parse_btn(key), down);
             }
-            qsort(evs, n_evs, sizeof(evs[0]), cmp_ev);
+            free(s);
             i++;
         } else {
             fprintf(stderr, "unknown option %s\n", a);
             return 2;
         }
     }
+
+    if (timeline_path)
+        load_timeline(timeline_path, timeline_base);
+    if (n_evs > 1)
+        qsort(evs, n_evs, sizeof(evs[0]), cmp_ev);
+    if (timeline_path)
+        printf("jj_host: timeline %s: %d events, last at %llu ms\n",
+               timeline_path, n_evs, (unsigned long long)(last_ev_us / 1000));
+    /* A timeline is usually longer than the default 30 s run. */
+    if (timeline_path && !end_set && end_us < last_ev_us + 5000000ull)
+        end_us = last_ev_us + 5000000ull;
 
 #ifdef _WIN32
     FILE *pf = fopen(pack_path, "rb");

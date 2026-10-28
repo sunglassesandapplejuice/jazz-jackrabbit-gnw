@@ -113,11 +113,39 @@ harness/build/jj_host Jazz.jj -t 30000 -e 1000 -o /tmp/out -w /tmp/out/a.wav
 harness/build/jj_host Jazz.jj -l 0:0 -s "10000:A:1,10200:A:0,14000:RIGHT:1" -S 20000 -o /tmp/out
 ```
 
-`-l world:level` starts at a level, `-q file -Q ms` writes a savestate,
+`-l world:level` starts at a level (`-l 0:1` = `LEVEL1.000`), `-q file -Q ms` writes a savestate,
 `-j file -J ms` loads one, `-L file` restores one at start, `-B file` /
 `-R dir` make the pictures / music of the pack, `make -C harness LIVE=1
 BUILD_DIR=build_live` traces the heap (`tools/live_report.py`). The pack is
 mapped read-only, like the flash.
+
+To replay a playthrough, record it in gwemu and trim the menu part:
+
+```
+GNW_TIMELINE_RECORD=rec.tl ./run_gwemu.sh
+python3 tools/timeline_trim.py rec.tl --auto -o level1.tl
+harness/build/jj_host Jazz.jj -l 0:0 -T level1.tl -o /tmp/out
+```
+
+`rec.tl` is created on the first button press, in the directory where the
+script was started (not in the firmware tree). `-T` reads gwemu's
+`down`/`release` lines (guest seconds; `-O seconds` subtracts a base).
+`--auto` cuts at the A press before the planet-intro gap, preferring a
+gap that is followed by real gameplay. If the player idled during the
+intro, use `--list` and pass the level-start press time with `--from`.
+
+Do not use the pause menu while recording: the port subtracts menu time,
+so the replay desyncs. If the recording already has one, drop everything
+from the first `pause` press:
+
+```
+python3 tools/timeline_trim.py rec.tl --auto --to 357.419 -o level1.tl
+```
+
+If the recording used another difficulty, pass `--difficulty
+easy|hard|turbo`; `--no-start` is for replays from `-L` or a normal boot.
+On macOS gwemu can segfault while closing SDL audio on exit; the timeline
+is unbuffered and already written, so the recording is intact.
 
 ## Layout
 
