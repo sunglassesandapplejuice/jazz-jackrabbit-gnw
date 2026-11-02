@@ -3,10 +3,135 @@
 Date: 2026-11-01  
 Repo: `~/code/jazz-jackrabbit-gnw`  
 Branch: `experiment`  
-Commit: `0991242` (`fix: play bonus level after deleting old level to avoid OOM`)  
-Status at handoff: **FIXED and committed**. The OOM is resolved in the harness at both 600 KB and device-sized (575 KB) heap. The working tree is clean. Remaining work is device/gwemu verification and cleanup (see checklist).
+Commit: `697a6a81` (`fix: play bonus level after deleting old level to avoid OOM`)  
+Status at handoff: **PARTIALLY FIXED and committed**. 
+  The OOM is resolved in the harness at both 600 KB and device-sized (575 KB) heap.
+  The working tree is clean. Remaining work is device/gwemu verification and cleanup (see checklist).
+
+**2026-11-02 update:** the second OOM (after the bonus level, 64,000 bytes) is
+fixed in the harness. See "Continuation 2026-11-02" below; device verification
+is still pending.
 
 The original handoff notes and investigation are preserved below for reference.
+
+---
+
+# Continuation 2026-11-02: second OOM (after the bonus level) fixed
+
+## TL;DR
+
+The 64,000-byte OOM after completing the bonus level was the `BONUS.0SC`
+cutscene's full-screen animation scratch surface (`320 * 200`) being allocated
+while the `JJ1BonusLevel` object was still alive. Same structural problem as the
+first OOM: the level was deleted *after* the cutscene instead of before.
+
+Two code changes fix it:
+
+1. `JJ1BonusLevel::releaseResources()` (new) frees the tileset, background,
+   sprites, font and palette effects. `JJ1BonusLevel::play()` calls it just
+   before `playScene("BONUS.0SC")`. The destructor also calls it (idempotent).
+   This mirrors `JJ1Level::releaseResources()` for the normal level-end scene.
+2. `Game::playLevel(fileName, intro, checkpoint)` now derives `levelType` from
+   `fileName` at entry. Previously the public one-argument overload set it, but
+   `Game::play()` calls the three-argument overload directly. After a bonus
+   level, `levelType` was left as `LT_JJ1BONUS`, so the next normal level
+   (`LEVEL0.001`) was parsed as a bonus map and failed with `E_FILE` (-17).
+
+Also removed the now-dead `JJ1Level::playBonus()` and added a comment in
+`Game::play()` explaining that `WON_BONUS` is consumed inside `playLevel()`.
+
+Key files changed:
+
+- `src/oj/game/game.cpp` — `levelType` derivation, `WON_BONUS` comment
+- `src/oj/jj1/bonuslevel/jj1bonuslevel.h` — `releaseResources()`
+- `src/oj/jj1/bonuslevel/jj1bonuslevel.cpp` — `releaseResources()`, call before
+  `BONUS.0SC`, destructor reuse
+- `src/oj/jj1/level/jj1level.h` / `jj1level.cpp` — removed `playBonus()`
+
+## Reproduction (pre-fix)
+
+Temporary force hooks (not committed) were used: force the level end + gem on
+the first draw, then force the bonus level to win on its first loop iteration.
+At `-H 575`:
+
+```text
+FORCE level end+gem heap=260512
+FORCE bonus win heap=180200
+jj_malloc: out of memory (64000 bytes requested, 247016 used / 588792)
+jj_host: FATAL at 9353 ms: out of memory (64000 bytes)
+```
+
+This is exactly the device symptom: `out of memory (64000 bytes)`.
+
+## Verification (post-fix, forced path)
+
+`-H 575` (device-sized heap), sound and music enabled:
+
+```text
+FORCE level end+gem heap=260512
+FORCE bonus win heap=180200
+jj_host: 50000 ms, 10304 frames presented, audio peak 32768,
+         heap used 261312 / peak 351784 / size 588792
+```
+
+- No OOM, exit 0.
+- No `jj: picture ... not pre-decoded: in RAM` lines (grep count 0).
+- After `BONUS.0SC`, the next normal level (`LEVEL0.001`) loaded and ran to the
+  50 s limit, confirming the `levelType` fix.
+
+Normal-load regression runs at `-H 575`, 20 s each, no force hooks:
+`LEVEL1.000`, `LEVEL0.001`, `LEVEL1.002`, `LEVEL1.001` — all ran with
+`heap used 24768 / peak 90952 / size 588792`, no crash.
+
+## Device build
+
+`Jazz.bin` was rebuilt in the Retro-Go SD builder container from the current
+source:
+
+```text
+text 131304  data 528  bss 18616
+segment[0]: region=ram_emu code=131832B bss=18616B
+Jazz.bin: 138578 bytes
+```
+
+New device heap = 741,376 - 131,832 - 18,616 = **590,928 bytes**, slightly
+larger than the harness `-H 575` heap (588,792) used above, so the harness
+result is conservative.
+
+## Remaining checklist
+
+- [ ] **Device/gwemu playthrough**: `Jazz.bin` is rebuilt; play through a bonus
+  level on gwemu and confirm the `BONUS.0SC` cutscene and the following level
+  load. (The harness path is verified; actual device play still needs a human.)
+- [ ] **Automate episode 1 transitions** end-to-end (still open).
+- [x] **`not pre-decoded` check**: no bake misses observed on the forced
+  level-end + bonus + next-level path.
+- [x] **Dead code cleanup**: `JJ1Level::playBonus()` removed.
+- [x] **`WON_BONUS` in `Game::play()` loop**: documented; `playLevel()` consumes
+  it and returns `WON`.
+- [ ] **Holiday Hare / shareware data**: retest with alternate data sets if
+  available.
+
+---
+
+# Continuation 2026-11-01 - later: device trial
+
+Human user rebuilt Jazz.bin with latest source, then ran the game on gwemu (./run_gwemu.sh).
+* Completed level 1 and 2
+* collected gem
+* saw the "level cleared" cutscene
+* bonus level loaded and was playable
+* collected the 30 "gems" in bonus level in order to exit the level
+* got a new OOM: "Jazz Jackrabbit error: out of memory (64000 bytes)" that booted me back to retro-go-sd launcher
+
+## Remaining checklist
+
+- [ ] investigate the new OOM (after bonus), possibly same type of issue (trying to load next intro/level without unloading current bonus level)
+- [ ] automate all transitions of episode 1 (intro 1 -> level 1 -> level 2 -> bonus -> intro 2 -> level 1 -> level 2 -> bonus -> intro 3 -> level 1 -> level 2 -> bonus)
+- [ ] **`not pre-decoded` check**: during a real (non-forced) transition, grep for `jj: picture ... not pre-decoded: in RAM` in the harness output. A bake miss may still lurk for some cutscene or next-level picture.
+- [ ] **Dead code cleanup**: `JJ1Level::playBonus()` is no longer called from anywhere. Either remove it (and its declaration in `jj1level.h`) or leave it as an internal utility. Not urgent.
+- [ ] **`WON_BONUS` in `Game::play()` loop**: the loop currently never sees `WON_BONUS` (it's consumed inside `playLevel`). If this invariant ever breaks the behaviour is harmless (it falls through as `> 0`, treated like LOST in the non-bonusmap branch), but adding an assertion or comment would make it explicit.
+- [ ] **Holiday Hare / shareware data**: retest with alternate data sets if available.
 
 ---
 

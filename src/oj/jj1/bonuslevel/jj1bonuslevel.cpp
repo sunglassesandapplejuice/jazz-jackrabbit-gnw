@@ -428,6 +428,33 @@ JJ1BonusLevel::JJ1BonusLevel (Game* owner, char * fileName, bool multi) : Level(
 
 
 /**
+ * Free the bonus level's graphical resources.
+ *
+ * Called when the level has been completed, before the end cutscene: the
+ * cutscene needs the room (its animation scratch is a full-screen surface)
+ * and the level is not drawn again. Safe to call more than once (the
+ * destructor does).
+ */
+void JJ1BonusLevel::releaseResources () {
+
+	delete paletteEffects;
+	paletteEffects = nullptr;
+
+	video.destroySurface(tileSet);
+	tileSet = nullptr;
+	video.destroySurface(background);
+	background = nullptr;
+
+	delete[] spriteSet;
+	spriteSet = nullptr;
+
+	delete font;
+	font = nullptr;
+
+}
+
+
+/**
  * Delete the JJ1 bonus level.
  */
 JJ1BonusLevel::~JJ1BonusLevel () {
@@ -435,12 +462,7 @@ JJ1BonusLevel::~JJ1BonusLevel () {
 	// Restore panelBigFont palette
 	panelBigFont->restorePalette();
 
-	video.destroySurface(tileSet);
-	video.destroySurface(background);
-
-	delete[] spriteSet;
-
-	delete font;
+	releaseResources();
 
 	resampleSounds();
 
@@ -762,6 +784,9 @@ int JJ1BonusLevel::play () {
 		if (returnTime && (ticks > returnTime)) {
 
 			if (localPlayer->getJJ1BonusLevelPlayer()->getGems() >= items) {
+
+				// The cutscene needs the bonus level's memory; free it first.
+				releaseResources();
 
 				if (playScene("BONUS.0SC") == E_QUIT) return E_QUIT;
 

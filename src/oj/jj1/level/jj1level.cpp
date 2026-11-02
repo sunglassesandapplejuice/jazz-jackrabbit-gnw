@@ -73,6 +73,7 @@ JJ1Level::JJ1Level (Game* owner) : Level(owner) {
 	events = nullptr;
 	bullets = nullptr;
 	sceneFile = nullptr;
+	pendingBonusFile = nullptr;
 	spriteSet = nullptr;
 	sky = false;
 	skyOrb = 0;
@@ -111,10 +112,62 @@ JJ1Level::JJ1Level (Game* owner, char* fileName, bool checkpoint, bool multi) :
 void JJ1Level::deletePanel () {
 
 	video.destroySurface(panel);
-	for (int i = 0; i < 6; i++)
+	panel = nullptr;
+	for (int i = 0; i < 6; i++) {
 		video.destroySurface(panelAmmo[i]);
-	for (int i = 0; i < 2; i++)
+		panelAmmo[i] = nullptr;
+	}
+	for (int i = 0; i < 2; i++) {
 		video.destroySurface(panelBG[i]);
+		panelBG[i] = nullptr;
+	}
+
+}
+
+
+/**
+ * Free the level's graphical resources.
+ *
+ * Called when the level has been completed, before the end cutscene and the
+ * bonus level are loaded: those need the room, and the level is not drawn
+ * again. Safe to call more than once (the destructor does).
+ */
+void JJ1Level::releaseResources () {
+
+	// Free events
+	if (events) {
+		delete events;
+		events = nullptr;
+	}
+
+	// Free bullets
+	if (bullets) {
+		delete bullets;
+		bullets = nullptr;
+	}
+
+	for (int i = 0; i < PATHS; i++) {
+
+		delete[] path[i].x;
+		delete[] path[i].y;
+		path[i].x = nullptr;
+		path[i].y = nullptr;
+
+	}
+
+	delete[] spriteSet;
+	spriteSet = nullptr;
+
+	video.destroySurface(tileSet);
+	tileSet = nullptr;
+#if OJ_DEBUG
+	video.destroySurface(maskedTileset);
+	maskedTileset = nullptr;
+#endif
+	deletePanel();
+
+	delete font;
+	font = nullptr;
 
 }
 
@@ -124,35 +177,32 @@ void JJ1Level::deletePanel () {
  */
 JJ1Level::~JJ1Level () {
 
-	// Free events
-	if (events) delete events;
-
-	// Free bullets
-	if (bullets) delete bullets;
-
-	for (int i = 0; i < PATHS; i++) {
-
-		delete[] path[i].x;
-		delete[] path[i].y;
-
-	}
+	releaseResources();
 
 	delete[] sceneFile;
 	delete[] musicFile;
-
-	delete[] spriteSet;
-
-	video.destroySurface(tileSet);
-#if OJ_DEBUG
-	video.destroySurface(maskedTileset);
-#endif
-	deletePanel();
-
-	delete font;
+	delete[] pendingBonusFile;
 
 	resampleSounds();
 
 	video.setTitle(nullptr);
+
+}
+
+
+/**
+ * Transfer ownership of the pending bonus file name.
+ *
+ * Called by Game::playLevel after level->play() returns WON_BONUS, before
+ * deleting the level. The caller is responsible for delete[]-ing the string.
+ *
+ * @return Heap-allocated file name, or nullptr if none was set.
+ */
+char* JJ1Level::takePendingBonusFile () {
+
+	char* f = pendingBonusFile;
+	pendingBonusFile = nullptr;
+	return f;
 
 }
 
@@ -673,33 +723,6 @@ void JJ1Level::flash (unsigned char red, unsigned char green, unsigned char blue
 
 
 /**
- * Play the bonus level.
- *
- * @return Error code
- */
-int JJ1Level::playBonus () {
-
-	char *bonusFile;
-	int ret;
-
-	if (!localPlayer->getJJ1LevelPlayer()->hasGem()) return E_NONE;
-
-	delete paletteEffects;
-	paletteEffects = nullptr;
-
-	bonusFile = createFileName("BONUSMAP", worldToEpisode(worldNum));
-
-	// If the gem has been collected, play the bonus level
-	ret = game->playLevel(bonusFile);
-
-	delete[] bonusFile;
-
-	return ret;
-
-}
-
-
-/**
  * Interpret data received from client/server
  *
  * @param buffer Received data
@@ -778,17 +801,14 @@ int JJ1Level::play () {
 		// Check if level has been won
 		if (game && returnTime && (ticks > returnTime)) {
 
+			// The level is over: the cutscene and the bonus level need its
+			// memory, and the level will not be drawn again.
+			releaseResources();
+
 			// Play "Level end" cutscene
 			// if available and secret level 2 was not found (FIXME: check JJ1, if true)
 			if (strlen(sceneFile) && nextLevelNum != 2) {
 				if (playScene(sceneFile) == E_QUIT) return E_QUIT;
-			}
-
-			if (!multiplayer) {
-				// If the gem has been collected, play the bonus level
-				ret = playBonus();
-
-				if (ret < 0) return ret;
 			}
 
 			// No next level, end game
@@ -802,6 +822,16 @@ int JJ1Level::play () {
 			}
 
 			if (ret < 0) return ret;
+
+			if (!multiplayer && localPlayer->getJJ1LevelPlayer()->hasGem()) {
+				// Gem collected: the bonus level must be played AFTER the old
+				// level object is deleted (to give the allocator a contiguous
+				// heap). Store the file name and signal the caller.
+				delete paletteEffects;
+				paletteEffects = nullptr;
+				pendingBonusFile = createFileName("BONUSMAP", worldToEpisode(worldNum));
+				return WON_BONUS;
+			}
 
 			return WON;
 		}

@@ -84,6 +84,7 @@ class JJ1BonusLevel : public Level {
 		bool isEvent     (fixed x, fixed y);
 		int  step        ();
 		void draw        ();
+		void releaseResources ();
 
 	public:
 		JJ1BonusLevel  (Game* owner, char* fileName, bool multi);

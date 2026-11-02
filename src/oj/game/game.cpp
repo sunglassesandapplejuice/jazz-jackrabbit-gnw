@@ -194,6 +194,11 @@ int Game::playLevel (char* fileName, bool intro, bool checkpoint) {
 
 	multiplayer = (mode->getMode() != M_SINGLE);
 
+	// The level type must follow the file being played: a bonus level leaves
+	// levelType == LT_JJ1BONUS behind, and the next normal level is played
+	// through this function from Game::play().
+	levelType = getLevelType(fileName);
+
 	if (isFileType(fileName, "macro", 5)) {
 
 		// Load and play the level
@@ -209,6 +214,31 @@ int Game::playLevel (char* fileName, bool intro, bool checkpoint) {
 		}
 
 		ret = level->play();
+
+		if (ret == WON_BONUS) {
+
+			// The level was won and the player collected the gem.
+			// Retrieve the bonus level file name *before* deleting the level
+			// so that the old level's heap is fully freed before the bonus
+			// level object (which needs a large contiguous block) is constructed.
+			char *bonusFile = level->takePendingBonusFile();
+
+			delete level;
+			baseLevel = level = NULL;
+
+			// Play the bonus level on a clean heap.
+			int bonusRet = E_NONE;
+			if (bonusFile) {
+				bonusRet = playLevel(bonusFile);
+				delete[] bonusFile;
+			}
+
+			// Propagate errors; treat WON/LOST/E_NONE as WON (the next normal
+			// level was already registered via setLevel inside JJ1Level::play).
+			if (bonusRet < 0) return bonusRet;
+			return WON;
+
+		}
 
 		delete level;
 		baseLevel = level = NULL;
@@ -305,6 +335,31 @@ int Game::playLevel (char* fileName, bool intro, bool checkpoint) {
 
 		ret = level->play();
 
+		if (ret == WON_BONUS) {
+
+			// The level was won and the player collected the gem.
+			// Retrieve the bonus level file name *before* deleting the level
+			// so that the old level's heap is fully freed before the bonus
+			// level object (which needs a large contiguous block) is constructed.
+			char *bonusFile = level->takePendingBonusFile();
+
+			delete level;
+			baseLevel = level = NULL;
+
+			// Play the bonus level on a clean heap.
+			int bonusRet = E_NONE;
+			if (bonusFile) {
+				bonusRet = playLevel(bonusFile);
+				delete[] bonusFile;
+			}
+
+			// Propagate errors; treat WON/LOST/E_NONE as WON (the next normal
+			// level was already registered via setLevel inside JJ1Level::play).
+			if (bonusRet < 0) return bonusRet;
+			return WON;
+
+		}
+
 		delete level;
 		baseLevel = level = NULL;
 
@@ -339,8 +394,6 @@ LevelType Game::getLevelType (const char* fileName) {
  */
 int Game::playLevel (char* fileName) {
 
-	levelType = getLevelType(fileName);
-
 	return playLevel(fileName, false, false);
 
 }
@@ -373,6 +426,8 @@ int Game::play () {
 
 		// Load and play the level
 
+		// playLevel() consumes WON_BONUS internally (it plays the bonus level
+		// after deleting the completed level) and reports WON instead.
 		int ret = playLevel(levelFile, !multiplayer && !skipIntro, checkpoint);
 		skipIntro = false;
 

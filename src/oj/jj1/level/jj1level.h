@@ -209,6 +209,7 @@ class JJ1Level : public Level {
 		JJ1Event*     events; ///< Active events
 		JJ1Bullet*    bullets; ///< Active bullets
 		char*         sceneFile; ///< File name of cutscene to play when level has been completed
+		char*         pendingBonusFile; ///< Bonus level file name to play after old level is deleted (set when returning WON_BONUS)
 		Sprite*       spriteSet; ///< Sprites
 		Anim          animSet[ANIMS]; ///< Animations
 		char          miscAnims[JJ1MANIMS]; ///< Further animations
@@ -239,11 +240,11 @@ class JJ1Level : public Level {
 		int animSpeed, jumpHeight;
 
 		void deletePanel  ();
+		void releaseResources ();
 		int  loadPanel    ();
 		void loadSprite   (File* file, Sprite* sprite);
 		int  loadSprites  (char* fileName);
 		int  loadTiles    (char* fileName);
-		int  playBonus    ();
 
 	protected:
 		Font* font; ///< On-screen message font
@@ -288,6 +289,7 @@ class JJ1Level : public Level {
 		void           flash         (unsigned char red, unsigned char green, unsigned char blue, int duration);
 		void           receive       (unsigned char* buffer) override;
 		virtual int    play          ();
+		char*          takePendingBonusFile (); ///< Transfer ownership of pendingBonusFile (caller must delete[])
 
 };
 

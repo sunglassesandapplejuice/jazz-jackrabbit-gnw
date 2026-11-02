@@ -39,8 +39,9 @@
 // Constants
 
 // Return values
-#define WON  1
-#define LOST 2
+#define WON       1
+#define LOST      2
+#define WON_BONUS 3 ///< Level won and a bonus level is pending (play after deleting the level)
 
 // Time interval
 #define T_STEP 16
