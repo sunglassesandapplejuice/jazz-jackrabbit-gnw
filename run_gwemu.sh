@@ -22,6 +22,15 @@ JAZZ_ROOT="$(cd "$(dirname "$0")" && pwd)"
 FW_ROOT="${FW_ROOT:-$JAZZ_ROOT/../game-and-watch-retro-go-sd}"
 FW_ROOT="$(cd "$FW_ROOT" && pwd)"
 
+# gwemu opens GNW_TIMELINE_RECORD relative to its own cwd, and we cd to
+# $FW_ROOT below. Make a relative path absolute so the recording lands
+# where the script was started, not in the firmware tree.
+if [ -n "${GNW_TIMELINE_RECORD:-}" ] && [ "${GNW_TIMELINE_RECORD#/}" = "$GNW_TIMELINE_RECORD" ]; then
+    GNW_TIMELINE_RECORD="$PWD/$GNW_TIMELINE_RECORD"
+    export GNW_TIMELINE_RECORD
+    echo "[record] timeline -> $GNW_TIMELINE_RECORD (created on first button press)"
+fi
+
 if [ ! -f "$JAZZ_ROOT/Jazz.bin" ]; then
     echo "Jazz.bin not found in $JAZZ_ROOT" >&2
     if command -v arm-none-eabi-gcc >/dev/null 2>&1; then

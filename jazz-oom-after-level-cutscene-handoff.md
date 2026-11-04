@@ -4,9 +4,12 @@ Date: 2026-11-01
 Repo: `~/code/jazz-jackrabbit-gnw`  
 Branch: `experiment`  
 Commit: `697a6a81` (`fix: play bonus level after deleting old level to avoid OOM`)  
-Status at handoff: **PARTIALLY FIXED and committed**. 
+Status at handoff: **FIXED and committed**. 
   The OOM is resolved in the harness at both 600 KB and device-sized (575 KB) heap.
-  The working tree is clean. Remaining work is device/gwemu verification and cleanup (see checklist).
+  The working tree is clean. Remaining work is in checklist.
+
+**2026-11-04 update:** a good-enough automated playback mechanism: human records .tl
+playthrough via gwemu, then jj_host replays it.
 
 **2026-11-02 update:** the second OOM (after the bonus level, 64,000 bytes) is
 fixed in the harness. See "Continuation 2026-11-02" below; device verification
@@ -15,6 +18,25 @@ is still pending.
 The original handoff notes and investigation are preserved below for reference.
 
 ---
+
+# Continuation 2026-11-04: work on the recording/replay of inputs
+README and tooling has been updated to suppor trimming and replaying a gwemu tl file.
+
+## Remaining checklist
+
+- [x] **Device/gwemu playthrough**: `Jazz.bin` is rebuilt; play through a bonus
+  level on gwemu and confirm the `BONUS.0SC` cutscene and the following level
+  load. (The harness path is verified; actual device play still needs a human.)
+- [ ] **Automate episode 1 transitions** end-to-end (still open): human needs to record long .tl file and
+  then something needs to assert a few frames (or other pieces of data) in that run.
+- [x] **`not pre-decoded` check**: no bake misses observed on the forced
+  level-end + bonus + next-level path.
+- [x] **Dead code cleanup**: `JJ1Level::playBonus()` removed.
+- [x] **`WON_BONUS` in `Game::play()` loop**: documented; `playLevel()` consumes
+  it and returns `WON`.
+- [ ] **Holiday Hare / shareware data**: retest with alternate data sets if
+  available.
+
 
 # Continuation 2026-11-02: second OOM (after the bonus level) fixed
 

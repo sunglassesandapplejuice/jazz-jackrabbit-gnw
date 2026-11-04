@@ -51,9 +51,16 @@ this file is the SDK's generic porting guide (memory map, audio, ABI).
 - Files: io/file.cpp uses jj_file.c under GNW (pack first, else
   <save dir>/<NAME>: /data/jazz/<stem>/, config and saved games).
 - Harness: `make -C harness` -> harness/build/jj_host (virtual clock,
-  scripts, PPM/WAV, -l w:l, -q/-Q, -j/-J, -L, -B, -R/-M/-A). LIVE=1 build
-  traces live heap blocks (tools/live_report.py <exe> live.txt[.peak]).
-  `tools/build_renderers.sh` builds jj_render for Windows/macOS/Linux (zig).
+  scripts, PPM/WAV, -l world:level, -q/-Q, -j/-J, -L, -B, -R/-M/-A).
+  `-T <timeline>` replays a gwemu recording (`GNW_TIMELINE_RECORD`), with
+  `-O <seconds>` as the guest-time base; `tools/timeline_trim.py` cuts the
+  menu prefix (`--auto`, `--from`, `--to`) and rebases it. A recording is
+  created on the first button press; run_gwemu.sh resolves a relative
+  GNW_TIMELINE_RECORD to the caller's cwd. Do not pause while recording
+  (the port subtracts menu time); use `--to` at the first pause instead.
+  LIVE=1 build traces live heap blocks (tools/live_report.py <exe>
+  live.txt[.peak]). `tools/build_renderers.sh` builds jj_render for
+  Windows/macOS/Linux (zig).
 - Device test: gwemu (fw-rc1) with QMP; keys x = A, z = B, esc = PAUSE/SET,
   ret = GAME. In a level: 60 fps (gwemu), log line "jj: fps, idle, heap"
   every 5 s.
