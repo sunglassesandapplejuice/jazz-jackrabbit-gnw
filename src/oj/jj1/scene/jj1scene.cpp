@@ -268,6 +268,7 @@ int JJ1Scene::play () {
 	auto sceneAnimation = animations.end();
 	PaletteEffect* paletteEffect = NULL;
 	int	frameDelay = 0;
+	bool frameWaited = false;
 	int prevFrame = 0;
 	int continueToNextPage = 0;
 
@@ -312,7 +313,13 @@ int JJ1Scene::play () {
 
 		}
 
-		SDL_Delay(T_MENU_FRAME);
+		// Pace the loop. Pages made of text only are held together by this
+		// delay; an animation frame has already waited out its whole
+		// frameDelay at the end of the previous iteration, so waiting again
+		// here would stretch every frame by T_MENU_FRAME and run the whole
+		// cutscene slower than the animSpeed of the page asks for.
+		if (!frameWaited) SDL_Delay(T_MENU_FRAME);
+		frameWaited = false;
 
 
 		if(pages[sceneIndex].askForYesNo) {
@@ -431,6 +438,7 @@ int JJ1Scene::play () {
 					SDL_BlitSurface(sceneAnimation->background, NULL, sceneAnimation->scratch, NULL);
 					currentFrame = sceneAnimation->sceneFrames;
 					SDL_Delay(frameDelay);
+					frameWaited = true;
 
 				}
 
@@ -450,6 +458,14 @@ int JJ1Scene::play () {
 					case EFullFrameAniHeader:
 
 						loadFullFrameMem(currentFrame->frameSize, currentFrame->frameData, static_cast<unsigned char*>(sceneAnimation->scratch->pixels));
+
+						break;
+
+					case E00AniHeader:
+
+						// Wait frame: scratch still holds the previous image,
+						// so there is nothing to decode - just keep showing it
+						// for this frame's worth of time.
 
 						break;
 
@@ -473,6 +489,7 @@ int JJ1Scene::play () {
 				else currentFrame = currentFrame->next;
 
 				SDL_Delay(frameDelay);
+				frameWaited = true;
 
 				if (currentFrame == NULL && sceneAnimation->reverseAnimation) {
 
