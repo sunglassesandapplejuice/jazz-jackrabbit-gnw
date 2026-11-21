@@ -386,8 +386,20 @@ void JJ1Scene::loadAni (JJ1SceneAnimation &scene, File *f, int dataIndex) {
 						}
 						break;
 
-					case E00AniHeader: // FIXME: wait command?
+					case E00AniHeader:
 						{
+							// This really is a wait command: a zero record is
+							// four zero bytes (tag 0, size 0) with no payload
+							// and means "keep showing what is already on
+							// screen for one frame". The frame count declared
+							// at the start of the ANI block counts them along
+							// with the image frames - STARTUP.0SC (CD version)
+							// says 237 and holds 92 "FF" blocks plus 145 zero
+							// records, and every other scene matches the same
+							// way - so add one no-op frame per record instead
+							// of silently dropping them, which played the cutscene
+							// with every hold missing.
+							int recordStart = f->tell() - 4;
 							int longvalue = f->loadInt();
 
 							while (longvalue == 0) {
@@ -398,9 +410,17 @@ void JJ1Scene::loadAni (JJ1SceneAnimation &scene, File *f, int dataIndex) {
 							}
 
 							f->seek(-4, false);
-							value = longvalue;
 
-							LOG_ANIM("PL Read Long: 0x%x", value);
+							// Consecutive zero records were counted above by
+							// stepping over them four bytes at a time
+							if (size == 0) {
+
+								for (int hold = (nextPos - recordStart) >> 2; hold > 0; hold--)
+									scene.addFrame(E00AniHeader, nullptr, 0);
+
+							}
+
+							LOG_ANIM("PL Read Long: 0x%x", longvalue);
 						}
 						break;
 
