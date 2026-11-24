@@ -145,7 +145,11 @@ python3 tools/timeline_trim.py rec.tl --auto --to 357.419 -o level1.tl
 If the recording used another difficulty, pass `--difficulty
 easy|hard|turbo`; `--no-start` is for replays from `-L` or a normal boot.
 On macOS gwemu can segfault while closing SDL audio on exit; the timeline
-is unbuffered and already written, so the recording is intact.
+is unbuffered and already written, so the recording is intact. The root
+cause is a teardown-order bug in gwemu itself (`display_finalize()`
+calls `SDL_Quit()` before QEMU's exit notifiers destroy the SAI1 audio
+stream); `gwemu-exit-crash.patch` fixes it — apply it to a gwemu
+checkout, rebuild, then `GWEMU_BIN=/path/to/gwemu_bin ./run_gwemu.sh`.
 
 ## Layout
 

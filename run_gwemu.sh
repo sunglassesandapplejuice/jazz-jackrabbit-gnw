@@ -7,6 +7,9 @@
 #
 # Environment:
 #   FW_ROOT   Retro-Go SD checkout (default: ../game-and-watch-retro-go-sd)
+#   GWEMU_BIN gwemu executable (default: $FW_ROOT/gwemu_bin) -- point this
+#             at a locally built gwemu, e.g. one patched with
+#             gwemu-exit-crash.patch
 set -euo pipefail
 
 if command -v docker >/dev/null 2>&1; then
@@ -21,6 +24,7 @@ fi
 JAZZ_ROOT="$(cd "$(dirname "$0")" && pwd)"
 FW_ROOT="${FW_ROOT:-$JAZZ_ROOT/../game-and-watch-retro-go-sd}"
 FW_ROOT="$(cd "$FW_ROOT" && pwd)"
+GWEMU_BIN="${GWEMU_BIN:-$FW_ROOT/gwemu_bin}"
 
 # gwemu opens GNW_TIMELINE_RECORD relative to its own cwd, and we cd to
 # $FW_ROOT below. Make a relative path absolute so the recording lands
@@ -195,9 +199,9 @@ with open(path, "w") as fh:
     fh.write(text)
 PYCFG
 
-echo "[run] launching gwemu"
+echo "[run] launching gwemu ($GWEMU_BIN)"
 QMP_PORT="${QMP_PORT:-4477}"
-exec "$FW_ROOT/gwemu_bin" -M gnw-h7b0 \
+exec "$GWEMU_BIN" -M gnw-h7b0 \
   -global gnw-h7b0-soc.bank1-image="$FW_ROOT/build/qemu_bank1.bin" \
   -global gnw-h7b0-soc.bank2-image="$FW_ROOT/build/qemu_bank2.bin" \
   -global gnw-h7b0-soc.extflash-image="$FW_ROOT/build/extflash.bin" \

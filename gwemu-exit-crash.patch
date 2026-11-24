@@ -1,0 +1,96 @@
+# Fix the gwemu exit crash (macOS): SIGBUS/SIGSEGV on every clean exit
+# (File -> Exit and window close alike).
+#
+# Cause: display_finalize() calls SDL_Quit() before main() returns.
+# SDL_QuitAudio() destroys every remaining `simplified` SDL_AudioStream --
+# including the one gnw_h7b0_sai1 opened. main() then returns -> exit() ->
+# atexit -> qemu_run_exit_notifiers() -> gnw_h7b0_sai1_exit ->
+# sdl3_fini_out() destroys the already-freed stream:
+#   SDL_LockAudioStream -> pthread_mutex_lock  (SIGSEGV, dangling stream)
+#   SDL_DestroyAudioStream -> SDL_DestroyAudioQueue (SIGBUS)
+# as seen in ~/Library/Logs/DiagnosticReports/gwemu-*.ips.
+#
+# Fix A: register SDL_Quit with atexit() before the qemu_main thread starts,
+#        so it runs after QEMU's exit notifiers (atexit is LIFO).
+# Fix B: make sdl3_close_out/in skip SDL when the audio subsystem is
+#        already gone (defence in depth).
+#
+# Affected: gwemu v0.0.29 (3bfce5f, branch gnw-h7b0).
+#
+# Apply:   cd <gwemu-checkout> && patch -p1 < gwemu-exit-crash.patch
+# Verify:  the patch must apply with no fuzz (it is a context-exact diff
+#          against v0.0.29).
+#
+--- a/audio/sdl3audio.c
++++ b/audio/sdl3audio.c
+@@ -124,8 +124,22 @@
+     }
+ }
+ 
++/*
++ * SDL_Quit() destroys every remaining audio stream (SDL_QuitAudio()
++ * always drops `simplified` streams, i.e. all SDL_OpenAudioDeviceStream()
++ * ones) before QEMU's exit notifiers get to close this voice -- leaving
++ * sdl->stream dangling and turning the close into a use-after-free
++ * (SIGSEGV in SDL_LockAudioStream / SIGBUS in SDL_DestroyAudioQueue).
++ * When the audio subsystem is already gone there is nothing left to
++ * pause or destroy: just forget the stream.
++ */
+ static void sdl3_close_out(SDL3VoiceOut *sdl)
+ {
++    if (!SDL_WasInit(SDL_INIT_AUDIO)) {
++        sdl->stream = NULL;
++        sdl->initialized = 0;
++        return;
++    }
+     if (sdl->initialized && sdl->stream) {
+         SDL_LockAudioStream(sdl->stream);
+         sdl->exit = 1;
+@@ -230,8 +244,14 @@
+     }
+ }
+ 
++/* See sdl3_close_out(): same teardown-order hazard for record streams. */
+ static void sdl3_close_in(SDL3VoiceIn *sdl)
+ {
++    if (!SDL_WasInit(SDL_INIT_AUDIO)) {
++        sdl->stream = NULL;
++        sdl->initialized = 0;
++        return;
++    }
+     if (sdl->initialized && sdl->stream) {
+         SDL_LockAudioStream(sdl->stream);
+         sdl->exit = 1;
+--- a/ui/gwemu.c
++++ b/ui/gwemu.c
+@@ -2297,7 +2297,12 @@
+     }
+     SDL_DestroyRenderer(m_renderer);
+     SDL_DestroyWindow(m_window);
+-    SDL_Quit();
++    /* No SDL_Quit() here: main() registers it via atexit() instead, so it
++     * runs AFTER QEMU's exit notifiers (atexit is LIFO and qemu_init()
++     * registers qemu_run_exit_notifiers later). Quitting SDL here tore the
++     * audio subsystem down while gnw_h7b0_sai1 still owned an open
++     * SDL_AudioStream, and the notifier then destroyed the freed stream
++     * -- SIGBUS/SIGSEGV on every clean exit. */
+ }
+ 
+ static QemuDisplay qemu_display_gwemu = {
+@@ -2705,6 +2710,16 @@
+     atexit(gwemu_settings_save);
+     gnw_input_load();
+     atexit(gnw_input_save);
++    /*
++     * Registered before the qemu_main thread starts, i.e. before
++     * qemu_init_subsystems() registers atexit(qemu_run_exit_notifiers).
++     * atexit runs LIFO, so the exit notifiers (which close the SDL3 audio
++     * streams owned by gnw_h7b0_sai1) run first and SDL_Quit() runs last.
++     * Quitting SDL before them double-destroyed those streams
++     * (SDL_QuitAudio() frees every remaining simplified stream) --
++     * SIGBUS/SIGSEGV on every clean exit on macOS.
++     */
++    atexit(SDL_Quit);
+ 
+     bool has_flash_images = false;
+     for (int i = 1; i < g_orig_argc; i++) {
